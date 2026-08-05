@@ -109,6 +109,13 @@ class moorDynR2
 
         mutable bool initialized_;
 
+        //- Restart support: mooring state checkpoint detected at
+        //  construction ("" = cold start -> MoorDyn_Init with IC solve).
+        //  When set, the first restrain() warm-starts MoorDyn via
+        //  MoorDyn_Init_NoIC + MoorDyn_LoadState instead. restrain() writes
+        //  the checkpoint to <t>/uniform/moorDynState at every write time.
+        fileName restartFile_;
+
         //-  Write mooring lines visualization file
         bool writeVTK_;
 

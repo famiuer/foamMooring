@@ -38,6 +38,8 @@ References
 #include "moorDynR2.H"
 #include "rigidBodyModel.H"
 #include "addToRunTimeSelectionTable.H"
+#include "Time.H"
+#include "OSspecific.H"   // isFile / mkDir (restart checkpointing)
 
 #include "foamVtkSeriesWriter.H"
 
@@ -84,6 +86,27 @@ Foam::RBD::restraints::moorDynR2::moorDynR2
     
     moordyn_backup_.t = 0.0;
     moordyn_backup_.data = nullptr;
+
+    // Restart support: a mooring state checkpoint saved by a previous run
+    // in the current (start) time directory means the line states must be
+    // RESTORED, not re-solved -- the first restrain() will then
+    // MoorDyn_Init_NoIC + MoorDyn_LoadState instead of MoorDyn_Init.
+    restartFile_.clear();
+    if (Pstream::master())
+    {
+        const Time& time = model.time();
+        const fileName rf
+        (
+            time.path()/time.timeName()/"uniform"/"moorDynState"
+        );
+        if (isFile(rf))
+        {
+            restartFile_ = rf;
+            Info<< "moorDynR2: found mooring state checkpoint " << rf << nl
+                << "           will warm-start MoorDyn from it (no IC solve)."
+                << endl;
+        }
+    }
 
     // Create the MoorDyn system
     // Check coupling mode: POINT vs BODY
@@ -274,15 +297,40 @@ void Foam::RBD::restraints::moorDynR2::restrain
 
     if (!initialized_)
     {
-        // Initialize MoorDyn
-        moordyn_err = MoorDyn_Init(moordyn_, X, XD);
-        if (moordyn_err != MOORDYN_SUCCESS) {
-            FatalErrorInFunction
-                << "MoorDyn could not be initialized"
-                << exit(FatalError);
+        if (!restartFile_.empty())
+        {
+            // RESTART: skip the IC solve, restore the saved line states.
+            // Validated (bit-exact round-trip) by
+            // of2-coupling/tools/moordyn_restart_smoke.cpp on this deck.
+            moordyn_err = MoorDyn_Init_NoIC(moordyn_, X, XD);
+            if (moordyn_err != MOORDYN_SUCCESS) {
+                FatalErrorInFunction
+                    << "MoorDyn could not be initialized (Init_NoIC, restart)"
+                    << exit(FatalError);
+            }
+            moordyn_err = MoorDyn_LoadState(moordyn_, restartFile_.c_str());
+            if (moordyn_err != MOORDYN_SUCCESS) {
+                FatalErrorInFunction
+                    << "MoorDyn_LoadState failed for " << restartFile_
+                    << " - refusing to continue with a cold mooring IC "
+                    << "(delete the moorDynState file to accept one)."
+                    << exit(FatalError);
+            }
+            Info<< "MoorDyn module state RESTORED from "
+                << restartFile_ << endl;
         }
+        else
+        {
+            // Initialize MoorDyn (cold start: IC solve at the current pose)
+            moordyn_err = MoorDyn_Init(moordyn_, X, XD);
+            if (moordyn_err != MOORDYN_SUCCESS) {
+                FatalErrorInFunction
+                    << "MoorDyn could not be initialized"
+                    << exit(FatalError);
+            }
 
-        Info<< "MoorDyn module initialized!" << endl;
+            Info<< "MoorDyn module initialized!" << endl;
+        }
         initialized_ = true;
         save_mooring(tprev);
         if (writeVTK_) {
@@ -354,6 +402,26 @@ void Foam::RBD::restraints::moorDynR2::restrain
                 << " force " << force
                 << " moment " << moment
                 << endl;   
+        }
+    }
+
+    // Restart support: persist the full MoorDyn state alongside each
+    // write-time snapshot. Every outer corrector of a write-time step
+    // overwrites the file; the LAST corrector's state is the one consistent
+    // with the written fields (same semantics as the in-memory
+    // save_mooring/load_mooring corrector backup above).
+    if (Pstream::master() && initialized_ && time.writeTime())
+    {
+        const fileName uniformDir(time.path()/time.timeName()/"uniform");
+        mkDir(uniformDir);
+        const int errSave =
+            MoorDyn_SaveState(moordyn_, (uniformDir/"moorDynState").c_str());
+        if (errSave != MOORDYN_SUCCESS)
+        {
+            WarningInFunction
+                << "MoorDyn_SaveState failed (err=" << errSave
+                << ") - this snapshot would restart with a cold mooring IC."
+                << endl;
         }
     }
 
