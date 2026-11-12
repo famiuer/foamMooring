@@ -6,8 +6,9 @@ set -e
 # ----------------------------------------------------------
 #   Compile the 3rd parties (modules)
 # ----------------------------------------------------------
-git submodule init
-git submodule update --remote
+# Pinned thirdParty SHAs only — never --remote: it floats to upstream
+# branch tips (irreproducible) and fails in shallow clones (no origin/v1).
+git submodule update --init
 cd thirdParty
 
 # ----------------------------------------------------------
