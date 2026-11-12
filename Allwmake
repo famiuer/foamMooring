@@ -22,10 +22,10 @@ cd MoorDyn_v1/compileSO
 make -j
 mkdir -p $FOAM_USER_LIBBIN
 # mkdir -p $FOAM_USER_LIBBIN/../include
-mkdir -p $WM_PROJECT_USER_DIR/foamMooring/src/include
 cp -f MoorDyn.so $FOAM_USER_LIBBIN/libmoordynv1.so
-# cp -f ../MoorDyn.h $FOAM_USER_LIBBIN/../include/MoorDynv1.h
-cp -f ../MoorDyn.h $WM_PROJECT_USER_DIR/foamMooring/src/include/MoorDynv1.h
+# Refresh the in-tree copy (src/include is on the EXE_INC path; the repo
+# is not necessarily checked out at $WM_PROJECT_USER_DIR/foamMooring)
+cp -f ../MoorDyn.h ../../../src/include/MoorDynv1.h
 cd ../..
 
 # ----------------------------------------------------------
